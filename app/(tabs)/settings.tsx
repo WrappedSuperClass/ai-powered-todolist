@@ -1,106 +1,81 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState('');
+  const router = useRouter();
+
+  useEffect(() => {
+    loadApiKey();
+  }, []);
 
   const loadApiKey = async () => {
-    const key = await AsyncStorage.getItem('openrouter_api_key');
-    setApiKey(key || '');
+    const key = await SecureStore.getItemAsync('openrouter_api_key');
+    if (key) setApiKey(key);
   };
 
   const saveApiKey = async () => {
-    await AsyncStorage.setItem('openrouter_api_key', apiKey);
-    Alert.alert('Saved', 'OpenRouter API key saved!');
+    await SecureStore.setItemAsync('openrouter_api_key', apiKey);
+    Alert.alert('Saved!', 'OpenRouter API key saved securely.');
+  };
+
+  const clearApiKey = async () => {
+    await SecureStore.deleteItemAsync('openrouter_api_key');
+    setApiKey('');
+    Alert.alert('Cleared', 'API key removed.');
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Settings</Text>
-      <View style={styles.inputContainer}>
-        <Text style={styles.label}>OpenRouter API Key</Text>
+    <ScrollView className="flex-1 bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800 p-6">
+      <View className="items-center mb-8">
+        <Text className="text-4xl font-bold bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent mb-4">
+          settings
+        </Text>
+        <Text className="text-lg text-gray-600 dark:text-gray-400 text-center">
+          set your openrouter api key for sassy grok magic
+        </Text>
+      </View>
+      <View className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-2xl mb-8">
+        <Text className="text-xl font-bold text-gray-900 dark:text-white mb-6">openrouter api key</Text>
         <TextInput
-          style={styles.input}
+          className="w-full p-4 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-2xl text-lg mb-6 text-gray-900 dark:text-white"
           value={apiKey}
           onChangeText={setApiKey}
           placeholder="sk-or-v1-..."
-          secureTextEntry
-          multiline
+          placeholderTextColor="#9CA3AF"
+          secureTextEntry={true}
+          multiline={true}
+          numberOfLines={4}
         />
-        <TouchableOpacity style={styles.saveButton} onPress={saveApiKey}>
-          <Text style={styles.saveButtonText}>Save API Key</Text>
+        <TouchableOpacity 
+          className="w-full bg-gradient-to-r from-emerald-500 to-green-600 rounded-2xl p-5 items-center mb-4"
+          onPress={saveApiKey}
+        >
+          <Text className="text-xl font-bold text-white">save key</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl p-5 items-center"
+          onPress={loadApiKey}
+        >
+          <Text className="text-xl font-bold text-white">reload saved key</Text>
         </TouchableOpacity>
       </View>
-      <TouchableOpacity style={styles.loadButton} onPress={loadApiKey}>
-        <Text style={styles.loadButtonText}>Load Saved Key</Text>
+      <TouchableOpacity 
+        className="w-full bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 items-center"
+        onPress={clearApiKey}
+      >
+        <Text className="text-xl font-bold text-white">clear key</Text>
       </TouchableOpacity>
-    </View>
+      <TouchableOpacity 
+        className="mt-8 p-4 bg-blue-500 rounded-2xl items-center"
+        onPress={() => router.back()}
+      >
+        <Ionicons name="arrow-back" size={24} color="white" />
+        <Text className="text-white font-bold mt-1">back to chaos</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: '#f8fafc',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  inputContainer: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1e293b',
-    marginBottom: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    backgroundColor: '#f8fafc',
-    textAlignVertical: 'top',
-    height: 100,
-  },
-  saveButton: {
-    backgroundColor: '#10B981',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  saveButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  loadButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  loadButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-});
