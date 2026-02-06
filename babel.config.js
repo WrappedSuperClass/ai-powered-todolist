@@ -2,9 +2,6 @@ module.exports = function(api) {
   api.cache(true);
   return {
     presets: ['babel-preset-expo'],
-    plugins: [
-      require.resolve('nativewind/babel'),
-      'react-native-reanimated/plugin',
-    ],
+    plugins: ['nativewind/babel', 'tamagui/babel-plugin'],
   };
 };

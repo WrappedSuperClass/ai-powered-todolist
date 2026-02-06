@@ -10,16 +10,39 @@ export interface Todo {
   title: string;
   completed: 0 | 1;
   created_at: string;
+  category?: string;
+  nag?: string;
 }
 
-export const initDB = (): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+export const initDB = (): Promise&lt;void&gt; =&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    db.transaction(tx =&gt; {
       tx.executeSql(
         'CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, completed INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)',
         [],
-        () => resolve(),
-        (_, error) => {
+        () =&gt; {
+          // Migrate/add columns safely
+          tx.executeSql(
+            "ALTER TABLE todos ADD COLUMN category TEXT DEFAULT 'chill'",
+            [],
+            () =&gt; {},
+            (_, error) =&gt; {
+              console.log('Category column migration ignored:', error);
+              return true;
+            }
+          );
+          tx.executeSql(
+            "ALTER TABLE todos ADD COLUMN nag TEXT",
+            [],
+            () =&gt; {},
+            (_, error) =&gt; {
+              console.log('Nag column migration ignored:', error);
+              return true;
+            }
+          );
+          resolve();
+        },
+        (_, error) =&gt; {
           console.error('DB init error:', error);
           reject(error);
           return false;
@@ -29,20 +52,20 @@ export const initDB = (): Promise<void> => {
   });
 };
 
-export const getTodos = (): Promise<Todo[]> => {
-  return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+export const getTodos = (): Promise&lt;Todo[]&gt; =&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    db.transaction(tx =&gt; {
       tx.executeSql(
         'SELECT * FROM todos ORDER BY created_at DESC',
         [],
-        (_, result) => {
+        (_, result) =&gt; {
           const todos: Todo[] = [];
-          for (let i = 0; i < result.rows.length; i++) {
+          for (let i = 0; i &lt; result.rows.length; i++) {
             todos.push(result.rows.item(i));
           }
           resolve(todos);
         },
-        (_, error) => {
+        (_, error) =&gt; {
           console.error('Get todos error:', error);
           reject(error);
           return false;
@@ -52,14 +75,14 @@ export const getTodos = (): Promise<Todo[]> => {
   });
 };
 
-export const addTodo = (title: string): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+export const addTodo = (title: string, category: string = 'chill', nag: string = ''): Promise&lt;number&gt; =&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    db.transaction(tx =&gt; {
       tx.executeSql(
-        'INSERT INTO todos (title) VALUES (?)',
-        [title],
-        (_, result) => resolve(result.insertId),
-        (_, error) => {
+        'INSERT INTO todos (title, category, nag) VALUES (?, ?, ?)',
+        [title, category, nag],
+        (_, result) =&gt; resolve(result.insertId as number),
+        (_, error) =&gt; {
           console.error('Add todo error:', error);
           reject(error);
           return false;
@@ -69,14 +92,14 @@ export const addTodo = (title: string): Promise<number> => {
   });
 };
 
-export const toggleTodo = (id: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+export const toggleTodo = (id: number): Promise&lt;void&gt; =&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    db.transaction(tx =&gt; {
       tx.executeSql(
         'UPDATE todos SET completed = 1 - completed WHERE id = ?',
         [id],
-        () => resolve(),
-        (_, error) => {
+        () =&gt; resolve(),
+        (_, error) =&gt; {
           console.error('Toggle todo error:', error);
           reject(error);
           return false;
@@ -86,14 +109,14 @@ export const toggleTodo = (id: number): Promise<void> => {
   });
 };
 
-export const deleteTodo = (id: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+export const deleteTodo = (id: number): Promise&lt;void&gt; =&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    db.transaction(tx =&gt; {
       tx.executeSql(
         'DELETE FROM todos WHERE id = ?',
         [id],
-        () => resolve(),
-        (_, error) => {
+        () =&gt; resolve(),
+        (_, error) =&gt; {
           console.error('Delete todo error:', error);
           reject(error);
           return false;
@@ -103,32 +126,43 @@ export const deleteTodo = (id: number): Promise<void> => {
   });
 };
 
-// Hook for todos
-export const useTodos = () => {
-  const [todos, setTodos] = useState<Todo[]>([]);
+export const useTodos = (filterCategory?: string) =&gt; {
+  const [todos, setTodos] = useState&lt;Todo[]&gt;([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    initDB().then(() => {
-      getTodos().then(setTodos).finally(() => setLoading(false));
+  useEffect(() =&gt; {
+    initDB().then(() =&gt; {
+      getTodos().then(t =&gt; {
+        if (filterCategory) {
+          setTodos(t.filter(item =&gt; item.category === filterCategory));
+        } else {
+          setTodos(t);
+        }
+      }).finally(() =&gt; setLoading(false));
     });
-  }, []);
+  }, [filterCategory]);
 
-  const refresh = () => {
-    getTodos().then(setTodos);
+  const refresh = () =&gt; {
+    getTodos().then(t =&gt; {
+      if (filterCategory) {
+        setTodos(t.filter(item =&gt; item.category === filterCategory));
+      } else {
+        setTodos(t);
+      }
+    });
   };
 
-  const add = async (title: string) => {
-    await addTodo(title);
+  const add = async (title: string, category?: string, nag?: string) =&gt; {
+    await addTodo(title, category || 'chill', nag || '');
     refresh();
   };
 
-  const toggle = async (id: number) => {
+  const toggle = async (id: number) =&gt; {
     await toggleTodo(id);
     refresh();
   };
 
-  const del = async (id: number) => {
+  const del = async (id: number) =&gt; {
     await deleteTodo(id);
     refresh();
   };
