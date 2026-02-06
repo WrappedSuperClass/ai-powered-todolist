@@ -1,22 +1,11 @@
 import React from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { useSharedValue, useAnimatedStyle, withSpring, Animated } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useTodos, Todo } from '../lib/db';
 
 const AnimatedView = Animated.createAnimatedComponent(View);
-
-const placeholderTodos = [
-  { id: '1', title: 'Learn React Native', completed: false },
-  { id: '2', title: 'Build todo app', completed: true },
-  { id: '3', title: 'Integrate AI', completed: false },
-];
-
-interface Todo {
-  id: string;
-  title: string;
-  completed: boolean;
-}
 
 const TodoItem: React.FC<{ todo: Todo; onToggle: () => void; onDelete: () => void }> = ({ todo, onToggle, onDelete }) => {
   const scale = useSharedValue(1);
@@ -33,6 +22,8 @@ const TodoItem: React.FC<{ todo: Todo; onToggle: () => void; onDelete: () => voi
     scale.value = withSpring(1);
   };
 
+  const isCompleted = todo.completed === 1;
+
   return (
     <AnimatedView style={animatedStyle} className="flex-row items-center p-4 bg-white dark:bg-gray-800 rounded-xl shadow-md mb-3">
       <TouchableOpacity 
@@ -41,12 +32,12 @@ const TodoItem: React.FC<{ todo: Todo; onToggle: () => void; onDelete: () => voi
         onPressIn={onPressIn}
         onPressOut={onPressOut}
       >
-        <Text className={`text-lg font-bold ${todo.completed ? 'text-green-500' : 'text-gray-400'}`}>
-          {todo.completed ? '✓' : '○'}
+        <Text className={`text-lg font-bold ${isCompleted ? 'text-green-500' : 'text-gray-400'}`}>
+          {isCompleted ? '✓' : '○'}
         </Text>
       </TouchableOpacity>
       <View className="flex-1">
-        <Text className={`text-lg font-semibold ${todo.completed ? 'line-through text-gray-500' : 'text-gray-900 dark:text-white'}`}>
+        <Text className={`text-lg font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-gray-900 dark:text-white'}`}>
           {todo.title}
         </Text>
       </View>
@@ -57,8 +48,23 @@ const TodoItem: React.FC<{ todo: Todo; onToggle: () => void; onDelete: () => voi
   );
 };
 
+const Loading = () => (
+  <View className="flex-1 justify-center items-center p-20">
+    <ActivityIndicator size="large" color="#3b82f6" />
+    <Text className="text-lg text-gray-500 mt-4">Loading todos...</Text>
+  </View>
+);
+
+const EmptyState = () => (
+  <View className="flex-1 justify-center items-center p-20">
+    <Ionicons name="clipboard-outline" size={80} color="gray" />
+    <Text className="text-2xl font-bold text-gray-400 mt-4 mb-2">No Todos</Text>
+    <Text className="text-gray-500 text-center">Add a todo to get started!</Text>
+  </View>
+);
+
 export default function HomeScreen() {
-  const [todos, setTodos] = React.useState(placeholderTodos);
+  const { todos, loading, add, toggle, del } = useTodos();
   const [text, setText] = React.useState('');
   const fabScale = useSharedValue(1);
 
@@ -74,26 +80,19 @@ export default function HomeScreen() {
     fabScale.value = withSpring(1);
   };
 
-  const addTodo = () => {
+  const addTodo = async () => {
     if (text.trim()) {
-      const newTodo: Todo = {
-        id: Date.now().toString(),
-        title: text.trim(),
-        completed: false,
-      };
-      setTodos(prev => [newTodo, ...prev]);
+      await add(text.trim());
       setText('');
     }
   };
 
-  const toggleTodo = (id: string) => {
-    setTodos(prev => prev.map(todo => 
-      todo.id === id ? { ...todo, completed: !todo.completed } : todo
-    ));
+  const toggleTodo = (id: number) => {
+    toggle(id);
   };
 
-  const deleteTodo = (id: string) => {
-    setTodos(prev => prev.filter(todo => todo.id !== id));
+  const deleteTodo = (id: number) => {
+    del(id);
   };
 
   const renderTodo = ({ item }: { item: Todo }) => (
@@ -102,14 +101,6 @@ export default function HomeScreen() {
       onToggle={() => toggleTodo(item.id)} 
       onDelete={() => deleteTodo(item.id)} 
     />
-  );
-
-  const EmptyState = () => (
-    <View className="flex-1 justify-center items-center p-20">
-      <Ionicons name="clipboard-outline" size={80} color="gray" />
-      <Text className="text-2xl font-bold text-gray-400 mt-4 mb-2">No Todos</Text>
-      <Text className="text-gray-500 text-center">Add a todo to get started!</Text>
-    </View>
   );
 
   return (
@@ -128,15 +119,16 @@ export default function HomeScreen() {
             value={text}
             onChangeText={setText}
             onSubmitEditing={addTodo}
+            editable={!loading}
           />
         </View>
         <FlatList
           data={todos}
           renderItem={renderTodo}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id.toString()}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 100 }}
-          ListEmptyComponent={EmptyState}
+          ListEmptyComponent={loading ? <Loading /> : <EmptyState />}
         />
       </View>
       <AnimatedView 
