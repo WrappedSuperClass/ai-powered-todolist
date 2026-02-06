@@ -1,335 +1,262 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, TextInput, FlatList, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as SQLite from 'expo-sqlite';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSharedValue, useAnimatedStyle, withSpring, Animated } from 'react-native-reanimated';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Audio } from 'expo-av';
+import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
+import { useTodos } from '../../lib/db';
+import { useRouter } from 'expo-router';
 
-const db = SQLite.openDatabase('todos.db');
+const AnimatedView = Animated.createAnimatedComponent(View);
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+interface ParsedTodo {
+  title: string;
+  category: 'now' | 'soon' | 'chill';
+  nag: string;
+}
 
-export default function TodoScreen() {
-  const [todos, setTodos] = useState([]);
-  const [newTodo, setNewTodo] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editingText, setEditingText] = useState('');
+const TodoItem = ({ todo, onToggle, onDelete }: any) => {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+  const onPressIn = () => scale.value = withSpring(0.95);
+  const onPressOut = () => scale.value = withSpring(1);
+  const isCompleted = todo.completed === 1;
+  const catColor = todo.category || 'chill';
+  const bgColor = catColor === 'now' ? 'bg-now-100' : catColor === 'soon' ? 'bg-soon-100' : 'bg-chill-100';
+
+  return (
+    <AnimatedView style={animatedStyle} className={`flex-row items-center p-4 bg-white dark:bg-gray-800 rounded-xl shadow-md mb-3 ${bgColor}`}>
+      <TouchableOpacity 
+        className="w-10 h-10 rounded-lg bg-gray-200 dark:bg-gray-700 items-center justify-center mr-4" 
+        onPress={onToggle}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+      >
+        <Text className={`text-lg font-bold ${isCompleted ? 'text-green-500' : 'text-gray-400'}`}>
+          {isCompleted ? '✓' : '○'}
+        </Text>
+      </TouchableOpacity>
+      <View className="flex-1 pr-2">
+        <Text className={`text-lg font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-gray-900 dark:text-white'}`}>
+          {todo.title}
+        </Text>
+        {todo.nag && <Text className="text-sm text-gray-500 italic">{todo.nag}</Text>}
+        <View className={`inline-flex px-2 py-1 rounded-full text-xs font-medium mt-1 ${catColor === 'now' ? 'bg-now-200 text-now-800' : catColor === 'soon' ? 'bg-soon-200 text-soon-800' : 'bg-chill-200 text-chill-800'}`}>
+          {catColor.toUpperCase()}
+        </View>
+      </View>
+      <TouchableOpacity onPress={onDelete} className="p-2">
+        <Ionicons name="trash-outline" size={24} color="#ef4444" />
+      </TouchableOpacity>
+    </AnimatedView>
+  );
+};
+
+export default function HomeScreen() {
+  const { todos, loading, add, toggle, del, refresh } = useTodos();
+  const [text, setText] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const fabScale = useSharedValue(1);
+  const router = useRouter();
+
+  const fabAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: fabScale.value }],
+  }));
 
   useEffect(() => {
-    initDB();
     loadApiKey();
-    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log(response);
+    Notifications.requestPermissionsAsync();
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
     });
-    return () => subscription?.remove();
   }, []);
 
-  const initDB = () => {
-    db.transaction(tx => {
-      tx.executeSql(
-        'CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, completed INTEGER DEFAULT 0, priority INTEGER DEFAULT 0, createdAt DATETIME DEFAULT CURRENT_TIMESTAMP);'
-      );
-      tx.executeSql('CREATE INDEX IF NOT EXISTS idx_priority ON todos(priority);');
-    }, null, refreshTodos);
-  };
-
   const loadApiKey = async () => {
-    const key = await AsyncStorage.getItem('openrouter_api_key');
+    const key = await SecureStore.getItemAsync('openrouter_api_key');
     setApiKey(key || '');
   };
 
-  const saveApiKey = async () => {
-    await AsyncStorage.setItem('openrouter_api_key', apiKey);
-  };
-
-  const refreshTodos = () => {
-    db.transaction(tx => {
-      tx.executeSql('SELECT * FROM todos ORDER BY priority DESC, createdAt ASC;', [], (_, { rows }) => {
-        setTodos(rows._array);
-      });
-    });
-  };
-
-  const addTodo = () => {
-    if (!newTodo.trim()) return;
-    db.transaction(tx => {
-      tx.executeSql('INSERT INTO todos (text) VALUES (?);', [newTodo], () => {
-        setNewTodo('');
-        refreshTodos();
-      });
-    });
-  };
-
-  const toggleTodo = (id) => {
-    db.transaction(tx => {
-      tx.executeSql(
-        'UPDATE todos SET completed = 1 - completed WHERE id = ?;',
-        [id],
-        refreshTodos
-      );
-    });
-  };
-
-  const deleteTodo = (id) => {
-    Alert.alert('Delete Todo', 'Are you sure?', [
-      { text: 'Cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => {
-        db.transaction(tx => {
-          tx.executeSql('DELETE FROM todos WHERE id = ?;', [id], refreshTodos);
-        });
-      } },
-    ]);
-  };
-
-  const updateTodo = (id, text) => {
-    db.transaction(tx => {
-      tx.executeSql('UPDATE todos SET text = ? WHERE id = ?;', [text, id], () => {
-        setEditingId(null);
-        setEditingText('');
-        refreshTodos();
-      });
-    });
-  };
-
-  const prioritizeWithAI = async () => {
+  const parseWithGrok = async (inputText: string): Promise<ParsedTodo | null> => {
     if (!apiKey) {
-      Alert.alert('API Key Required', 'Please set your OpenRouter API key in Settings.');
-      return;
-    }
-    if (todos.length === 0) {
-      Alert.alert('No Todos', 'Add some todos to prioritize.');
-      return;
+      Alert.alert('API Key Needed', 'Set your OpenRouter API key in Settings.');
+      return null;
     }
     try {
-      const prompt = `Prioritize these todos by urgency and importance. Output ONLY a JSON array of IDs in order highest to lowest priority. Example: [1,3,2]
-
-Todos: ${JSON.stringify(todos.map(t => ({id: t.id, text: t.text, completed: t.completed ? 'yes' : 'no'})), null, 2)}`;
-
+      const prompt = `you are a lowercase sassy chaotic todo gremlin. parse this dump into ONLY valid JSON: {"title": "sassy lowercase title max 50 chars", "category": "now|soon|chill", "nag": "short sassy lowercase nag msg"}. be fun chaotic lowercase no caps. example: {"title": "fix that damn leak lol", "category": "now", "nag": "do it now or regret lazybones"}`;
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': \`Bearer \${apiKey}\`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://aitodolist.app',
-          'X-Title': 'AI TodoList Mobile',
+          'X-Title': 'Sassy AI TodoList',
         },
         body: JSON.stringify({
           model: 'x-ai/grok-beta',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
+          messages: [{ role: 'user', content: prompt + '\\n\\n' + inputText }],
+          temperature: 0.8,
         }),
       });
-
       const data = await response.json();
       const content = data.choices[0].message.content.trim();
-      const order = JSON.parse(content);
-
-      // Update priorities
-      db.transaction(tx => {
-        order.forEach((id, index) => {
-          tx.executeSql('UPDATE todos SET priority = ? WHERE id = ?;', [order.length - index, id]);
-        });
-        refreshTodos();
-      });
-
-      Alert.alert('Success', 'Todos prioritized by AI!');
+      return JSON.parse(content);
     } catch (error) {
       console.error(error);
-      Alert.alert('Error', 'AI prioritization failed. Check API key and network.');
+      Alert.alert('Parse Error', 'Failed to parse with Grok. Check API key.');
+      return null;
     }
   };
 
-  const scheduleNotification = (todo) => {
-    Notifications.scheduleNotificationAsync({
+  const addTodo = async () => {
+    if (!text.trim()) return;
+    setParsing(true);
+    const parsed = await parseWithGrok(text.trim());
+    setParsing(false);
+    if (parsed) {
+      await add(parsed.title, parsed.category, parsed.nag);
+      scheduleNotification(parsed.title, parsed.nag, parsed.category);
+      setText('');
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      await recording.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
+      await recording.startAsync();
+      setRecording(recording);
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Failed to start recording', err);
+    }
+  };
+
+  const stopRecording = async () => {
+    setIsRecording(false);
+    await recording!.stopAndUnloadingAsync();
+    const uri = recording!.getURI();
+    const base64 = await Audio.getAudioBytesAsync(uri!);
+    const transcribed = await transcribeAudio(base64!);
+    if (transcribed) {
+      setParsing(true);
+      const parsed = await parseWithGrok(transcribed);
+      setParsing(false);
+      if (parsed) {
+        await add(parsed.title, parsed.category, parsed.nag);
+        scheduleNotification(parsed.title, parsed.nag, parsed.category);
+      }
+    }
+    setRecording(null);
+  };
+
+  const transcribeAudio = async (audioBase64: string) => {
+    if (!apiKey) return null;
+    try {
+      const formData = new FormData();
+      formData.append('file', {
+        uri: `data:audio/m4a;base64,${audioBase64}`,
+        type: 'audio/m4a',
+        name: 'recording.m4a',
+      } as any);
+      formData.append('model', 'openai/whisper-large-v3-turbo');
+      const response = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': \`Bearer \${apiKey}\`,
+        },
+        body: formData,
+      });
+      const data = await response.json();
+      return data.text;
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Transcription Error', 'Failed to transcribe audio.');
+      return null;
+    }
+  };
+
+  const scheduleNotification = async (title: string, nag: string, category: string) => {
+    let seconds = 600; // 10min default
+    if (category === 'now') seconds = 300; // 5min
+    if (category === 'soon') seconds = 3600; // 1h
+    if (category === 'chill') seconds = 86400; // 24h
+    await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Todo Reminder',
-        body: todo.text,
+        title: 'sassy todo nag',
+        body: \`\${nag} - \${title}\`,
       },
-      trigger: { seconds: 60 }, // 1 min for demo
+      trigger: { seconds },
     });
   };
 
+  const onFABPressIn = () => fabScale.value = withSpring(0.95);
+  const onFABPressOut = () => fabScale.value = withSpring(1);
+
+  const renderTodo = ({ item }: any) => (
+    <TodoItem todo={item} onToggle={() => toggle(item.id)} onDelete={() => del(item.id)} />
+  );
+
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>AI TodoList</Text>
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Add new todo..."
-          value={newTodo}
-          onChangeText={setNewTodo}
-          onSubmitEditing={addTodo}
-        />
-        <TouchableOpacity style={styles.addButton} onPress={addTodo}>
-          <Ionicons name="add" size={24} color="white" />
-        </TouchableOpacity>
-      </View>
-      <TouchableOpacity style={styles.aiButton} onPress={prioritizeWithAI}>
-        <Ionicons name="flash" size={20} color="white" />
-        <Text style={styles.aiButtonText}>AI Prioritize</Text>
-      </TouchableOpacity>
-      <FlatList
-        data={todos}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => (
-          <View style={[styles.todoItem, item.completed && styles.completedTodo]}>
-            <TouchableOpacity
-              style={styles.checkbox}
-              onPress={() => toggleTodo(item.id)}
-            >
-              {item.completed ? (
-                <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-              ) : (
-                <View style={styles.checkboxEmpty} />
-              )}
-            </TouchableOpacity>
-            {editingId === item.id ? (
-              <TextInput
-                style={styles.editInput}
-                value={editingText || item.text}
-                onChangeText={setEditingText}
-                onBlur={() => updateTodo(item.id, editingText || item.text)}
-                onSubmitEditing={() => updateTodo(item.id, editingText || item.text)}
-                autoFocus
-              />
-            ) : (
-              <TouchableOpacity style={styles.todoTextContainer} onPress={() => {
-                setEditingId(item.id);
-                setEditingText(item.text);
-              }}>
-                <Text style={[styles.todoText, item.completed && styles.completedText]}>
-                  {item.text}
-                </Text>
-              </TouchableOpacity>
-            )}
-            <View style={styles.actions}>
-              <TouchableOpacity onPress={() => scheduleNotification(item)}>
-                <Ionicons name="notifications" size={20} color="#F59E0B" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => deleteTodo(item.id)} style={styles.deleteButton}>
-                <Ionicons name="trash" size={20} color="#EF4444" />
-              </TouchableOpacity>
-            </View>
-          </View>
+    <GestureHandlerRootView className="flex-1 bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800">
+      <View className="flex-1 p-6">
+        <View className="flex-row items-center mb-8">
+          <Text className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            sassy ai todos
+          </Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/settings')} className="ml-auto p-2">
+            <Ionicons name="settings-outline" size={28} color="#6b7280" />
+          </TouchableOpacity>
+        </View>
+        <View className="flex-row mb-6">
+          <TextInput
+            className="flex-1 p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-lg shadow-sm mr-2"
+            placeholder="text dump or tap voice..."
+            placeholderTextColor="#9CA3AF"
+            value={text}
+            onChangeText={setText}
+            editable={!loading || !parsing}
+          />
+          <TouchableOpacity 
+            className={`w-12 h-12 rounded-2xl items-center justify-center ${parsing ? 'bg-gray-400' : 'bg-blue-500'}`}
+            onPress={parsing ? undefined : addTodo}
+            disabled={parsing}
+          >
+            {parsing ? <ActivityIndicator color="white" size="small" /> : <Ionicons name="send" size={20} color="white" />}
+          </TouchableOpacity>
+        </View>
+        {isRecording ? (
+          <TouchableOpacity className="w-20 h-20 bg-red-500 rounded-full items-center justify-center mx-auto mb-6" onPress={stopRecording}>
+            <Text className="text-3xl text-white font-bold">⏹️</Text>
+            <Text className="text-white text-sm mt-1">stop</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity className="w-20 h-20 bg-blue-500 rounded-full items-center justify-center mx-auto mb-6" onPress={startRecording}>
+            <Ionicons name="mic" size={32} color="white" />
+            <Text className="text-white text-xs mt-1">voice</Text>
+          </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.emptyText}>No todos yet. Add one!</Text>}
-      />
-    </ScrollView>
+        <FlatList
+          data={todos}
+          renderItem={renderTodo}
+          keyExtractor={(item: any) => item.id.toString()}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          ListEmptyComponent={loading ? <ActivityIndicator size="large" className="my-20" /> : <View className="flex-1 justify-center items-center p-20"><Ionicons name="clipboard-outline" size={80} color="gray" /><Text className="text-2xl font-bold text-gray-400 mt-4 mb-2">no todos</Text><Text className="text-gray-500 text-center">voice or text dump to start chaos</Text></View>}
+        />
+      </View>
+    </GestureHandlerRootView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    padding: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    marginBottom: 20,
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    backgroundColor: 'white',
-  },
-  addButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 12,
-    padding: 12,
-    marginLeft: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  aiButton: {
-    flexDirection: 'row',
-    backgroundColor: '#f59e0b',
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  aiButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
-    marginLeft: 8,
-  },
-  todoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  completedTodo: {
-    opacity: 0.7,
-  },
-  checkbox: {
-    marginRight: 12,
-  },
-  checkboxEmpty: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#cbd5e1',
-  },
-  todoTextContainer: {
-    flex: 1,
-  },
-  todoText: {
-    fontSize: 16,
-    color: '#1e293b',
-  },
-  completedText: {
-    textDecorationLine: 'line-through',
-    color: '#94a3b8',
-  },
-  editInput: {
-    flex: 1,
-    paddingVertical: 4,
-    fontSize: 16,
-    color: '#1e293b',
-  },
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deleteButton: {
-    marginLeft: 12,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#64748b',
-    fontSize: 16,
-    marginTop: 50,
-  },
-});
